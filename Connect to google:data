@@ -1,0 +1,166 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <DHT.h>
+#include "FS.h"
+#include "SPIFFS.h"
+#include <time.h>  // For timestamp
+
+// ==> UPDATE THESE VALUES <==
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
+String scriptURL = "YOUR_GOOGLE_APPS_SCRIPT_URL";
+
+// Pin Definitions
+#define DHT_PIN     4
+#define PIR_PIN     13
+#define BUZZER_PIN  27
+#define MQ135_PIN   34
+
+// DHT Setup
+#define DHT_TYPE    DHT11
+DHT dht(DHT_PIN, DHT_TYPE);
+
+// Timer for sending data
+unsigned long lastDataSampleTime = 0;
+const long dataSampleInterval = 30000; // 30 seconds
+
+// Function prototypes
+void sendDataToSheet(String dataLine);
+void logDataOffline(String dataLine);
+void syncOfflineData();
+String getTimestamp();
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+  pinMode(PIR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+
+  // Initialize SPIFFS
+  if (!SPIFFS.begin(true)) {
+    Serial.println("SPIFFS mount failed");
+    return;
+  }
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to Wi-Fi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  // Configure NTP for IST (UTC + 5:30)
+  configTime(19800, 0, "pool.ntp.org", "time.nist.gov");
+  Serial.println("Waiting for NTP time sync...");
+  while (!time(nullptr)) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nTime synchronized!");
+}
+
+void loop() {
+  // PIR + Buzzer logic
+  bool motion = digitalRead(PIR_PIN);
+  digitalWrite(BUZZER_PIN, motion ? HIGH : LOW);
+
+  // Sample data every interval
+  if (millis() - lastDataSampleTime > dataSampleInterval) {
+    lastDataSampleTime = millis();
+
+    float temp = dht.readTemperature();
+    float hum  = dht.readHumidity();
+    int mq135_raw = analogRead(MQ135_PIN);
+    bool motion_status = digitalRead(PIR_PIN);
+
+    if (isnan(temp) || isnan(hum)) {
+      Serial.println("DHT sensor read failed!");
+      return;
+    }
+
+    String timestamp = getTimestamp();
+    String dataToSend = "?timestamp=" + timestamp +
+                        "&temperature=" + String(temp, 1) +
+                        "&humidity=" + String(hum, 1) +
+                        "&mq135=" + String(mq135_raw) +
+                        "&motion=" + String(motion_status ? "YES" : "NO");
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("WiFi connected. Syncing offline data...");
+      syncOfflineData();
+      Serial.println("Sending current data...");
+      sendDataToSheet(dataToSend);
+    } else {
+      Serial.println("WiFi disconnected. Logging data locally.");
+      logDataOffline(dataToSend);
+    }
+  }
+}
+
+String getTimestamp() {
+  time_t now = time(nullptr);
+  struct tm* timeinfo = localtime(&now);
+  char buffer[25];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+  return String(buffer);
+}
+
+void sendDataToSheet(String dataLine) {
+  HTTPClient http;
+  String fullUrl = scriptURL + dataLine;
+  http.begin(fullUrl);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  int httpResponseCode = http.GET();
+  Serial.print("HTTP Response code: ");
+  Serial.println(httpResponseCode);
+  http.end();
+}
+
+void logDataOffline(String dataLine) {
+  File file = SPIFFS.open("/datalog.txt", FILE_APPEND);
+  if (!file) {
+    Serial.println("Error opening file for appending");
+    return;
+  }
+  if (file.println(dataLine)) {
+    Serial.println("Data saved locally.");
+  } else {
+    Serial.println("File append failed.");
+  }
+  file.close();
+}
+
+void syncOfflineData() {
+  File file = SPIFFS.open("/datalog.txt", FILE_READ);
+  if (!file || file.size() == 0) {
+    return;
+  }
+
+  Serial.println("Offline data found. Syncing...");
+  File tempFile = SPIFFS.open("/datalog_temp.txt", FILE_WRITE);
+
+  while (file.available()) {
+    String line = file.readStringUntil('\n');
+    if (line.length() > 1) {
+      if (WiFi.status() == WL_CONNECTED) {
+        sendDataToSheet(line);
+        delay(500);
+      } else {
+        Serial.println("WiFi lost during sync. Saving remaining data.");
+        tempFile.print(line);
+      }
+    }
+  }
+
+  file.close();
+  tempFile.close();
+
+  SPIFFS.remove("/datalog.txt");
+  SPIFFS.rename("/datalog_temp.txt", "/datalog.txt");
+
+  Serial.println("Sync complete.");
+}
