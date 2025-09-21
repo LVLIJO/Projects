@@ -1,0 +1,59 @@
+#include <DHT.h>
+
+// 🟩 Pin Configuration
+#define DHTPIN 5              // DHT22 DATA pin
+#define DHTTYPE DHT22
+#define PIRPIN 4              // PIR sensor pin
+#define MQ135_PIN 34          // MQ135 analog output to GPIO34
+
+// 🟩 DHT Sensor
+DHT dht(DHTPIN, DHTTYPE);
+
+void setup() {
+  Serial.begin(115200);
+  
+  dht.begin();
+  pinMode(PIRPIN, INPUT);
+  pinMode(MQ135_PIN, INPUT);
+
+  Serial.println("✅ ESP32 Initialized with:");
+  Serial.println("📍 DHT22 on GPIO5");
+  Serial.println("📍 PIR on GPIO4");
+  Serial.println("📍 MQ135 on GPIO34 (Analog)");
+}
+
+void loop() {
+  // 🟦 1. PIR Motion Detection
+  bool motionDetected = digitalRead(PIRPIN);
+  Serial.println(motionDetected ? "🔔 Motion Detected!" : "⏳ No Motion.");
+
+  // 🟦 2. DHT22 Sensor (Temperature & Humidity)
+  delay(2000);  // DHT22 needs at least 2 seconds delay between reads
+  float humidity = dht.readHumidity();
+  float temperature = dht.readTemperature();
+
+  if (isnan(humidity) || isnan(temperature)) {
+    Serial.println("⚠ Failed to read from DHT22 sensor!");
+  } else {
+    Serial.print("🌡 Temp: ");
+    Serial.print(temperature);
+    Serial.print(" °C  |  💧 Humidity: ");
+    Serial.print(humidity);
+    Serial.println(" %");
+  }
+
+  // 🟦 3. MQ135 Air Quality Reading
+  int mq135Value = analogRead(MQ135_PIN);  // 0–4095 on ESP32
+  Serial.print("🟫 MQ135 Analog Value: ");
+  Serial.println(mq135Value);
+
+  // Optional: interpret air quality roughly
+  if (mq135Value > 2000) {
+    Serial.println("😷 Air Quality: Poor (Gas Detected)");
+  } else {
+    Serial.println("😊 Air Quality: Good");
+  }
+
+  Serial.println("--------------------------------------------------");
+  delay(2000); // Delay before next loop
+}
