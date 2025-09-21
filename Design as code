@@ -1,0 +1,36 @@
+// MQ-135 Air Quality Sensor with Arduino UNO
+// Reads analog value and estimates PPM
+
+#define MQ135_PIN A0  // Analog pin connected to sensor A0
+
+// Calibration values (you may need to adjust after testing)
+float R0 = 10.0; // Sensor resistance in clean air (kΩ), calibrate for accuracy
+
+void setup() {
+  Serial.begin(9600);
+  Serial.println("MQ-135 Gas Sensor Test");
+}
+
+void loop() {
+  // Step 1: Read raw analog value (0-1023)
+  int sensorValue = analogRead(MQ135_PIN);
+
+  // Step 2: Convert to voltage
+  float voltage = sensorValue * (5.0 / 1023.0);
+
+  // Step 3: Estimate PPM (basic approximation)
+  // The formula depends on gas type & calibration
+  float RS_gas = (5.0 - voltage) / voltage; // Sensor resistance
+  float ratio = RS_gas / R0;
+  float ppm = 116.6020682 * pow(ratio, -2.769034857); // Example for CO2
+
+  // Step 4: Display results
+  Serial.print("Raw Value: ");
+  Serial.print(sensorValue);
+  Serial.print(" | Voltage: ");
+  Serial.print(voltage);
+  Serial.print(" V | Estimated PPM: ");
+  Serial.println(ppm);
+
+  delay(1000); // 1 second delay
+}
